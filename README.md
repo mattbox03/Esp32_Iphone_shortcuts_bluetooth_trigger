@@ -87,7 +87,7 @@ pio device monitor      # serial logs at 115200 baud
 3. Add the actions you want → **Next** → turn **off** *"Ask Before Running"* → **Done**.
 
 From now on, every time the ESP32 powers up and connects, the automation runs.
-
+Very useful with Home Assistant Automations.
 ---
 
 ## Notes
