@@ -1,0 +1,9 @@
+# PlatformIO build output
+.pio
+
+# IDE: contains local absolute machine paths
+.vscode/
+
+# Generated per-env sdkconfig (sdkconfig.defaults IS versioned)
+sdkconfig.*
+!sdkconfig.defaults
