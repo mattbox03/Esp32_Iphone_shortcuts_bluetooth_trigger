@@ -1,115 +1,103 @@
-# ESP32 BT Trigger
+# ESP32 BT Trigger + Find My (dual mode)
 
-A tiny ESP32 firmware that acts as a **Bluetooth trigger for iPhone Shortcuts
-automations**.
+One classic ESP32 doing **two things at once**:
 
-The ESP32 presents itself to your iPhone as a **Classic Bluetooth** device (a
-mouse). It never sends any input — the **act of connecting** is the trigger: iOS
-runs a Shortcuts automation set to *"When &lt;device&gt; connects"*. After a reboot
-or a dropped link, the ESP32 **reconnects on its own** to the last paired iPhone.
+1. **Classic Bluetooth HID trigger** — pairs with your iPhone as a mouse; the act
+   of connecting fires an iOS **Shortcuts** automation. Auto-reconnects. (Same as
+   the [esp32-bt-trigger](../esp32-bt-trigger) project.)
+2. **BLE "Find My" beacon** — broadcasts a public key like a lost AirTag, so nearby
+   Apple devices anonymously report its encrypted location. You retrieve and decrypt
+   those locations yourself.
 
-### What you can do with it
-
-Power the ESP32 from something you switch on (a scooter, bike, car, desk lamp,
-3D-printer, door…). When it powers up it connects to your iPhone, and your
-Shortcuts automation fires automatically — for example:
-
-- open a navigation / dashboard app,
-- toggle a Focus mode or Do Not Disturb,
-- start a timer, set the volume, send a message, run any shortcut.
-
-It's the "when this turns on, do that on my phone" building block, done over
-plain Bluetooth with no extra app on the phone.
-
-> **Why a mouse and not a keyboard?** While an HID *keyboard* is connected, iOS
-> hides the on-screen keyboard. A pointing device does not, so your on-screen
-> keyboard keeps working (iOS shows the AssistiveTouch pointer instead).
->
-> **Why Classic Bluetooth and not BLE?** This project is for people who want a
-> Classic-BT HID device recognized by iPhone. (A BLE HID would also work; this
-> one deliberately uses Classic BT via ESP-IDF.) Note: Classic **SPP** (serial)
-> does *not* work with iPhone — Classic **HID** does, which is what this uses.
+> ⚠️ **This is the unofficial, reverse-engineered route ([OpenHaystack](https://github.com/seemoo-lab/openhaystack)).**
+> It is **not** a certified "Works with Find My" accessory and won't appear in the
+> stock *Find My* app. Use it to locate **your own** property. The beacon uses a
+> **static key** (it doesn't rotate like a real AirTag), so it may trigger
+> "unknown accessory" anti-stalking alerts on other people's iPhones.
 
 ---
 
-## Change the name
-
-The Bluetooth name is defined in one place, in [`src/main.cpp`](src/main.cpp):
-
-```c
-#define DEVICE_NAME  "ESP32-BT-Trigger"
-```
-
-Change it, rebuild, re-flash. After a name change, "Forget This Device" on the
-iPhone and pair again.
-
----
-
-## Hardware
-
-- A **classic ESP32** with Classic Bluetooth — **not** an ESP32-C3/C6/H2 (those
-  are BLE-only). Set `board` in `platformio.ini` (default `wemos_d1_mini32`; a
-  generic module also works as `esp32dev`).
-- A USB cable.
-
----
-
-## Build & flash (PlatformIO)
+## Step 1 — Generate your keys
 
 ```bash
-pio run                 # build
-pio run -t erase        # (recommended on first flash) wipe old pairings
-pio run -t upload       # flash the ESP32
-pio device monitor      # serial logs at 115200 baud
+pip install cryptography
+python tools/generate_keys.py
 ```
 
-> The serial port is auto-detected; set `upload_port` / `monitor_port` in
-> `platformio.ini` if you have several devices.
->
-> This project uses **ESP-IDF 5.3.1** with **CMake 3.30** (see `platformio.ini`):
-> the *Classic BT HID Device* role is disabled in the precompiled Arduino
-> libraries, so ESP-IDF is required. The first build downloads the SDK and is slow.
+It prints two things:
+- a **C array** → paste it into [`src/main.cpp`](src/main.cpp), replacing
+  `findmy_public_key[28]`;
+- a **key block** (Private / Advertisement / Hashed) → save it as `my-tag.keys`
+  (you'll import it later). **Keep the private key secret.**
+
+## Step 2 — Build & flash
+
+```bash
+pio run -t erase     # recommended on first flash
+pio run -t upload
+pio device monitor    # you should see "Find My beacon: advertising"
+```
+
+Pair the Classic side from the iPhone and set up the Shortcuts automation exactly
+like the base project (Settings → Bluetooth → `ESP32-BT-Trigger`).
+
+## Step 3 — Read the location ("associate it to your account")
+
+There is **no pairing of the ESP32 to your Apple ID**. The ESP32 only broadcasts a
+public key. "Association" happens on the **retrieval** side, with
+**[macless-haystack](https://github.com/dchristl/macless-haystack)** (the no-Mac
+successor of OpenHaystack):
+
+1. Deploy macless-haystack (Docker): it runs an **anisette** server + a fetch
+   endpoint, plus an app (web / desktop / Android) to show tags on a map.
+2. **Log in with an Apple ID** — this is the part tied to *your account*. The tool
+   uses it to query Apple's Find My network endpoint. **Use a secondary Apple ID**
+   (with 2FA) rather than your main one: the script polls Apple's servers and some
+   people prefer to keep that off their primary account.
+3. **Import `my-tag.keys`** into the app (the tag you generated in Step 1).
+4. The app fetches reports for your tag's *hashed* key, decrypts them with your
+   *private* key, and shows the location + history on a map.
+
+Reports appear only after **other** Apple devices have passed near the beacon (it
+can take from minutes to hours depending on foot traffic). The beacon must be
+**powered** to be found — for theft-tracking a small battery is needed so it keeps
+broadcasting when the scooter is off.
 
 ---
 
-## iPhone setup
+## How it works (short)
 
-### 1) Pair (once)
+| Layer | What happens |
+|------|--------------|
+| ESP32 | Broadcasts the 28-byte public key in a BLE advertisement shaped like a lost AirTag (key split between the BLE random address and the payload). |
+| Nearby iPhones | Encrypt their own GPS with your public key (ECDH/ECIES) and upload it to Apple, indexed by `SHA256(public key)`. |
+| You | Query Apple with that hash (via macless-haystack + your Apple ID), decrypt with the private key. |
 
-1. Flash the firmware and power the ESP32.
-2. iPhone → **Settings → Bluetooth** → tap the device under **Other Devices**
-   (pairs with no code, "Just Works") → it moves to **My Devices**.
+Crypto: elliptic curve **P-224 (secp224r1)**. Tunables in `src/main.cpp`:
+advertising interval (`findmy_adv_params`), Classic name (`DEVICE_NAME`).
 
-### 2) Create the automation (Shortcuts app)
-
-1. **Shortcuts** app → **Automation** tab → **+** → **Create Personal Automation**.
-2. **Bluetooth** → **Device** → select your device → **Next**.
-3. Add the actions you want → **Next** → turn **off** *"Ask Before Running"* → **Done**.
-
-From now on, every time the ESP32 powers up and connects, the automation runs.
-Very useful with Home Assistant Automations.
----
-
-## Notes
-
-- **Reconnect** is handled by the ESP32: it calls back the last paired iPhone
-  (from the saved-devices list, which persists across reboots). Interval:
-  `RECONNECT_PERIOD_S` in `src/main.cpp`.
-- **On-screen pointer**: with a mouse iOS shows the AssistiveTouch cursor; the
-  on-screen keyboard remains usable.
-- The red/yellow `BT_BTM` / `BT_HCI` lines during connection are normal bluedroid
-  log noise, not real errors.
-
----
-
-## How it's built
+## Files
 
 | File | Purpose |
 |------|---------|
-| `src/main.cpp` | Firmware: Classic BT HID mouse + auto-reconnect |
-| `sdkconfig.defaults` | Re-enables Classic BT + HID Device in the ESP-IDF stack |
-| `platformio.ini` | ESP-IDF 5.3.1, CMake 3.30 |
+| `src/main.cpp` | Dual-mode firmware: Classic HID trigger + BLE Find My beacon |
+| `tools/generate_keys.py` | Generates the P-224 key pair (public for firmware, private for retrieval) |
+| `sdkconfig.defaults` | Enables dual mode (BTDM) + Classic HID Device + BLE |
+| `partitions.csv` | Larger app partition (the dual-mode stack needs > 1 MB) |
 
-## License
+## Credits
 
-MIT — see [LICENSE](LICENSE).
+Find My offline-finding protocol reverse-engineered by
+[OpenHaystack / SEEMOO Lab](https://github.com/seemoo-lab/openhaystack);
+Mac-less retrieval by [macless-haystack](https://github.com/dchristl/macless-haystack).
+
+
+
+Easy script to convert ASCII to HEX to replace in a  Find my advertisement key function given by https://dchristl.github.io/macless-haystack/ site:
+
+import base64
+k = base64.b64decode("INCOLLA_QUI_LA_ADVERTISEMENT_KEY")
+assert len(k) == 28, f"Errore: {len(k)} byte invece di 28 (forse hai copiato la chiave sbagliata)"
+print("static uint8_t findmy_public_key[28] = {")
+print("    " + ",\n    ".join(", ".join(f"0x{b:02x}" for b in k[i:i+8]) for i in range(0,28,8)))
+print("};")

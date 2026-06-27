@@ -1,28 +1,24 @@
 # ============================================================
-#  ESP32 BT Trigger - Classic Bluetooth + HID Device config
-#  (these values re-enable what the Arduino framework keeps off)
+#  ESP32 BT Trigger + Find My - DUAL MODE (Classic BT + BLE)
 # ============================================================
 
-# Bluetooth enabled
+# Bluetooth enabled, DUAL mode (BR/EDR + BLE together)
 CONFIG_BT_ENABLED=y
-
-# Classic Bluetooth only (BR/EDR), no BLE
-CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=y
+CONFIG_BTDM_CTRL_MODE_BTDM=y
+CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY=n
 CONFIG_BTDM_CTRL_MODE_BLE_ONLY=n
-CONFIG_BTDM_CTRL_MODE_BTDM=n
 
-# Bluedroid host with Classic profile + HID Device (the missing piece!)
+# Bluedroid host: Classic + HID Device (the trigger) AND BLE (the Find My beacon)
 CONFIG_BT_BLUEDROID_ENABLED=y
 CONFIG_BT_CLASSIC_ENABLED=y
 CONFIG_BT_HID_ENABLED=y
 CONFIG_BT_HID_DEVICE_ENABLED=y
 CONFIG_BT_HID_HOST_ENABLED=n
+CONFIG_BT_BLE_ENABLED=y
 
-# Note: on ESP-IDF 5.x, Secure Simple Pairing (required by iPhone) is always
-# enabled for Classic BT, so there is no dedicated option to set.
-
-# Bigger app partition: the Classic Bluetooth stack takes a lot of space
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+# Bigger app partition: the dual-mode BT stack does not fit in 1 MB
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
 # 4 MB flash (typical on the Wemos D1 mini ESP32)
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
